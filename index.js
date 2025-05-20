@@ -10,11 +10,11 @@ const port = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json()); // for parsing application/json
 app.use(express.urlencoded({ extended: true })); // for parsing application/x-www-form-urlencoded
-app.use(express.static('public')); // Serve static files
+app.use(express.static('public/dist')); // Serve static files
 
 // Serve index.html as root
 app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+    res.sendFile(path.join(__dirname, 'public/dist', 'index.html'));
 });
 
 // to check backend is upto-date
