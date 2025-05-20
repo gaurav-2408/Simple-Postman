@@ -46,28 +46,43 @@ function App() {
   const sendRequest = async () => {
     try {
       const requestConfig = {
-        method: method,
-        url: url,
-        headers: headers.reduce((acc, { key, value }) => {
-          if (key && value) {
-            acc[key] = value;
-          }
-          return acc;
-        }, {}),
-        data: method !== 'GET' ? body : undefined,
-        auth: authToken ? { bearer: authToken } : undefined
+        method: 'POST',
+        url: '/api/request',
+        data: {
+          endPoint: url,
+          httpMethod: method,
+          headers: headers.reduce((acc, { key, value }) => {
+            if (key && value) {
+              acc[key] = value;
+            }
+            return acc;
+          }, {}),
+          body: method !== 'GET' ? body : undefined
+        }
       };
 
-      console.log('Sending request:', requestConfig);
+      console.log('Sending request to backend:', requestConfig);
       try {
         const response = await axios(requestConfig);
         console.log('Response:', response.data);
-        setResponseStatus(response.status);
-        setResponse(response.data);
+        // The status code from the backend's response is in response.data.status
+        setResponseStatus(response.data.status || response.status);
+        // Handle both JSON and text responses
+        if (typeof response.data === 'string') {
+          setResponse(response.data);
+        } else {
+          setResponse(JSON.stringify(response.data, null, 2));
+        }
       } catch (error) {
         console.error('Error:', error);
-        setResponseStatus(error.response?.status || 'Error');
-        setResponse(error.response?.data || 'Unexpected error occurred');
+        // Handle error response
+        if (error.response) {
+          setResponseStatus(error.response.status);
+          setResponse(JSON.stringify(error.response.data, null, 2));
+        } else {
+          setResponseStatus('Error');
+          setResponse('Unexpected error occurred');
+        }
       }
     } catch (error) {
       console.error('Unexpected error:', error);
@@ -169,11 +184,7 @@ function App() {
             <textarea 
               value={body} 
               onChange={handleBodyChange} 
-              placeholder='{
-  "title": "foo",
-  "body": "bar",
-  "userId": 1
-}'
+              placeholder='{\n  "title": "foo",\n  "body": "bar",\n  "userId": 1\n}'
             />
           </div>
 
@@ -188,8 +199,10 @@ function App() {
           </div>
 
           <div className={`tab-content ${activeTab === 'scripts' ? 'active' : ''}`}>
-            <label>Pre-request Script (not functional yet)</label>
-            <textarea placeholder="// Add your pre-request script here"></textarea>
+            <label>Pre-request Script</label>
+            <textarea placeholder="// Write your pre-request script here" />
+            <label>Test Script</label>
+            <textarea placeholder="// Write your test script here" />
           </div>
         </div>
 
@@ -199,7 +212,7 @@ function App() {
               Status: {responseStatus}
             </span>
           </div>
-          <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflow: 'auto' }}>{response}</pre>
+          <pre className="response-data">{response}</pre>
         </div>
       </div>
     </div>
