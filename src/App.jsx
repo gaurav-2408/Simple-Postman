@@ -18,6 +18,43 @@ function App() {
     body: ''
   });
   const [responseStatus, setResponseStatus] = useState('');
+  const [requestHistory, setRequestHistory] = useState(JSON.parse(localStorage.getItem('requestHistory')) || []);
+
+  // Save request to history
+  const saveToHistory = () => {
+    const request = {
+      id: Date.now(),
+      method,
+      url,
+      headers: [...headers],
+      body,
+      authToken,
+      timestamp: new Date().toISOString()
+    };
+    
+    const newHistory = [request, ...requestHistory].slice(0, 10); // Keep only last 10 requests
+    setRequestHistory(newHistory);
+    localStorage.setItem('requestHistory', JSON.stringify(newHistory));
+  };
+
+  // Load request from history
+  const loadFromHistory = (request) => {
+    setMethod(request.method);
+    setUrl(request.url);
+    setHeaders(request.headers);
+    setBody(request.body);
+    setAuthToken(request.authToken);
+  };
+
+  // Update state when curl is parsed
+  React.useEffect(() => {
+    if (parsedCurl.url) {
+      setMethod(parsedCurl.method);
+      setUrl(parsedCurl.url);
+      setHeaders(parsedCurl.headers);
+      setBody(parsedCurl.body);
+    }
+  }, [parsedCurl]);
 
   const handleMethodChange = (e) => {
     setMethod(e.target.value);
@@ -59,15 +96,20 @@ function App() {
         body: ''
       };
       
-      // Remove the curl command word
-      const args = command.replace(/curl\s*/i, '').trim();
+      // Remove the curl command word and any trailing backslashes
+      const cleanedCommand = command.replace(/curl\s*/i, '').replace(/\\\s*$/g, '').trim();
       
-      // Split by spaces while preserving quoted strings
-      const parts = args.match(/(?:["']([^"']+)["']|\S+)/g) || [];
+      // Split by spaces while preserving quoted strings and handling newlines
+      const parts = cleanedCommand.match(/(?:["']([^"'] *)["']|\S+)/g) || [];
       
       // Process each part
       for (let i = 0; i < parts.length; i++) {
         const part = parts[i];
+        
+        // Skip --location flag as it's not needed for our request
+        if (part.startsWith('--location')) {
+          continue;
+        }
         
         // Extract method
         if (part.startsWith('-X')) {
@@ -98,7 +140,9 @@ function App() {
           if (body) {
             // Try to parse JSON if possible
             try {
-              parsed.body = JSON.parse(body);
+              // Handle JSON body with escaped quotes
+              const cleanedBody = body.replace(/\\"/g, '"');
+              parsed.body = JSON.parse(cleanedBody);
             } catch (e) {
               parsed.body = body;
             }
@@ -109,12 +153,6 @@ function App() {
       
       // Update preview
       setParsedCurl(parsed);
-      
-      // Update main form state
-      setMethod(parsed.method);
-      setUrl(parsed.url);
-      setHeaders(parsed.headers);
-      setBody(JSON.stringify(parsed.body, null, 2));
     } catch (error) {
       console.error('Error parsing curl command:', error);
       setParsedCurl({
@@ -129,28 +167,32 @@ function App() {
 
   const sendRequest = async () => {
     try {
-      const requestConfig = {
-        method: 'POST',
-        url: '/api/request',
-        data: {
-          endPoint: url,
-          httpMethod: method,
-          headers: headers.reduce((acc, { key, value }) => {
-            if (key && value) {
-              acc[key] = value;
-            }
-            return acc;
-          }, {}),
-          body: method !== 'GET' ? body : undefined
-        }
+      const config = {
+        method: method.toLowerCase(),
+        url,
+        headers: headers.reduce((acc, curr) => {
+          if (curr.key && curr.value) {
+            acc[curr.key] = curr.value;
+          }
+          return acc;
+        }, {}),
+        data: body
       };
 
-      console.log('Sending request to backend:', requestConfig);
-      try {
-        const response = await axios(requestConfig);
-        console.log('Response:', response.data);
-        // The status code from the backend's response is in response.data.status
-        setResponseStatus(response.data.status || response.status);
+      if (authToken) {
+        config.headers.Authorization = `Bearer ${authToken}`;
+      }
+
+      const response = await axios(config);
+      setResponse(JSON.stringify(response.data, null, 2));
+      setResponseStatus(`Status: ${response.status}`);
+      
+      // Save to history after successful request
+      saveToHistory();
+    } catch (error) {
+      setResponse(error.response ? JSON.stringify(error.response.data, null, 2) : error.message);
+      setResponseStatus(`Error: ${error.response?.status || 'Unknown error'}`);
+    }
         // Handle both JSON and text responses
         if (typeof response.data === 'string') {
           setResponse(response.data);
@@ -171,121 +213,131 @@ function App() {
     } catch (error) {
       console.error('Unexpected error:', error);
       setResponse('Unexpected error occurred');
-    }
-  };
 
-  return (
+    const response = await axios(config);
+    setResponse(JSON.stringify(response.data, null, 2));
+    setResponseStatus(`Status: ${response.status}`);
+    
+    // Save to history after successful request
+    saveToHistory();
+  } catch (error) {
     <div className="container">
       <h2>DISH Postman</h2>
       
-      <div className="top-bar">
-        <select value={method} onChange={handleMethodChange}>
-          <option>GET</option>
-          <option>POST</option>
-          <option>PUT</option>
-          <option>DELETE</option>
-          <option>PATCH</option>
-        </select>
-        <input 
-          type="text" 
-          value={url} 
-          onChange={handleUrlChange} 
-          placeholder="https://jsonplaceholder.typicode.com/posts"
-        />
-        <button onClick={sendRequest}>Send</button>
-      </div>
+      <div className="request-section">
+        <div className="history-section">
+          <h3>Request History</h3>
+          <div className="history-list">
+            {requestHistory.map((request) => (
+              <div 
+                key={request.id} 
+                className="history-item"
+                onClick={() => loadFromHistory(request)}
+              >
+                <span>{request.method}</span>
+                <span>{request.url}</span>
+                <span>{new Date(request.timestamp).toLocaleString()}</span>
+              </div>
+            ))}
+          </div>
+        </div>
 
-      <div className="request-response">
         <div className="request">
-          <div className="tabs">
-            <div 
-              className={`tab ${activeTab === 'headers' ? 'active' : ''}`} 
-              onClick={() => setActiveTab('headers')}
-            >
-              Headers
-            </div>
-            <div 
-              className={`tab ${activeTab === 'body' ? 'active' : ''}`} 
-              onClick={() => setActiveTab('body')}
-            >
-              Body
-            </div>
-            <div 
-              className={`tab ${activeTab === 'auth' ? 'active' : ''}`} 
-              onClick={() => setActiveTab('auth')}
-            >
-              Authorization
-            </div>
-            <div 
-              className={`tab ${activeTab === 'scripts' ? 'active' : ''}`} 
-              onClick={() => setActiveTab('scripts')}
-            >
-              Scripts
-            </div>
-            <div 
-              className={`tab ${activeTab === 'curl' ? 'active' : ''}`} 
-              onClick={() => setActiveTab('curl')}
-            >
-              cURL
-            </div>
+          <div className="method-selector">
+            <select value={method} onChange={handleMethodChange}>
+              <option value="GET">GET</option>
+              <option value="POST">POST</option>
+              <option value="PUT">PUT</option>
+              <option value="DELETE">DELETE</option>
+              <option value="PATCH">PATCH</option>
+            </select>
           </div>
-
-          <div className={`tab-content ${activeTab === 'headers' ? 'active' : ''}`}>
-            <label>Headers</label>
-            <table>
-              <thead>
-                <tr>
-                  <th>Key</th>
-                  <th>Value</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {headers.map((header, index) => (
-                  <tr key={index}>
-                    <td>
-                      <input 
-                        type="text" 
-                        value={header.key} 
-                        onChange={(e) => handleHeaderChange(index, 'key', e.target.value)}
-                        placeholder="Content-Type"
-                      />
-                    </td>
-                    <td>
-                      <input 
-                        type="text" 
-                        value={header.value} 
-                        onChange={(e) => handleHeaderChange(index, 'value', e.target.value)}
-                        placeholder="application/json"
-                      />
-                    </td>
-                    <td>
-                      <button onClick={() => removeHeader(index)}>❌</button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <button onClick={addHeader}>+ Add Header</button>
-          </div>
-
-          <div className={`tab-content ${activeTab === 'body' ? 'active' : ''}`}>
-            <label>Body (JSON)</label>
-            <textarea 
-              value={body} 
-              onChange={handleBodyChange} 
-              placeholder='{\n  "title": "foo",\n  "body": "bar",\n  "userId": 1\n}'
+          <div className="url-input">
+            <input 
+              type="text" 
+              value={url} 
+              onChange={handleUrlChange} 
+              placeholder="Enter URL"
             />
           </div>
-
-          <div className={`tab-content ${activeTab === 'auth' ? 'active' : ''}`}>
-            <label>Authorization</label>
+          <div className="auth-token">
             <input 
               type="text" 
               value={authToken} 
               onChange={handleAuthChange} 
-              placeholder="Bearer token..."
+              placeholder="Bearer Token (optional)"
             />
+          </div>
+          <div className="tab-container">
+            <button 
+              className={`tab ${activeTab === 'headers' ? 'active' : ''}`} 
+              onClick={() => setActiveTab('headers')}
+            >
+              Headers
+            </button>
+            <button 
+              className={`tab ${activeTab === 'body' ? 'active' : ''}`} 
+              onClick={() => setActiveTab('body')}
+            >
+              Body
+            </button>
+            <button 
+              className={`tab ${activeTab === 'curl' ? 'active' : ''}`} 
+              onClick={() => setActiveTab('curl')}
+            >
+              cURL
+            </button>
+          </div>
+          {activeTab === 'headers' && (
+            <div className="headers-section">
+              {headers.map((header, index) => (
+                <div key={index} className="header-row">
+                  <input 
+                    type="text" 
+                    value={header.key} 
+                    onChange={(e) => handleHeaderChange(index, 'key', e.target.value)}
+                    placeholder="Key"
+                  />
+                  <input 
+                    type="text" 
+                    value={header.value} 
+                    onChange={(e) => handleHeaderChange(index, 'value', e.target.value)}
+                    placeholder="Value"
+                  />
+                  <button onClick={() => removeHeader(index)}>Remove</button>
+                </div>
+              ))}
+              <button onClick={addHeader}>Add Header</button>
+            </div>
+          )}
+          {activeTab === 'body' && (
+            <div className="body-section">
+              <textarea 
+                value={body} 
+                onChange={handleBodyChange} 
+                placeholder="Enter request body"
+              />
+            </div>
+          )}
+          {activeTab === 'curl' && (
+            <div className="curl-section">
+              <textarea 
+                value={curlCommand} 
+                onChange={(e) => {
+                  setCurlCommand(e.target.value);
+                  parseCurlCommand(e.target.value);
+                }} 
+                placeholder="Enter cURL command"
+              />
+              <button onClick={() => {
+                const command = `curl -X ${method.toUpperCase()} ${url}`;
+                headers.forEach(header => {
+                  if (header.key && header.value) {
+                    command += ` -H "${header.key}: ${header.value}"`;
+                  }
+                });
+                if (body.trim()) {
+                  command += ` -d '${body}'`;
           </div>
 
           <div className={`tab-content ${activeTab === 'curl' ? 'active' : ''}`}>
@@ -296,28 +348,20 @@ function App() {
                 setCurlCommand(e.target.value);
                 parseCurlCommand(e.target.value);
               }} 
-              placeholder="Enter your cURL command here..."
-              rows="4"
-              className="curl-input"
+              placeholder="Enter cURL command"
             />
-            <div className="curl-preview">
-              <h4>Preview:</h4>
-              <div className="curl-preview-content">
-                <p>Method: {parsedCurl.method}</p>
-                <p>URL: {parsedCurl.url}</p>
-                <div>
-                  <h5>Headers:</h5>
-                  {parsedCurl.headers.map((header, index) => (
-                    <p key={index}>{header.key}: {header.value}</p>
-                  ))}
-                </div>
-                {parsedCurl.body && (
-                  <div>
-                    <h5>Body:</h5>
-                    <pre>{parsedCurl.body}</pre>
-                  </div>
-                )}
-              </div>
+            <button onClick={() => {
+              const command = `curl -X ${method.toUpperCase()} ${url}`;
+              headers.forEach(header => {
+                if (header.key && header.value) {
+                  command += ` -H "${header.key}: ${header.value}"`;
+                }
+              });
+              if (body.trim()) {
+                command += ` -d '${body}'`;
+              }
+              setCurlCommand(command);
+            }}>Generate cURL</button>
             </div>
           </div>
 
@@ -339,6 +383,7 @@ function App() {
         </div>
       </div>
     </div>
+    </>
   );
 }
 
